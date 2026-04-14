@@ -1736,3 +1736,96 @@ class TestProgressMessageThread:
             "so each @mention starts its own thread"
         )
         assert msg_event.message_id == "2000000000.000001"
+
+
+# ---------------------------------------------------------------------------
+# TestFetchThreadContextBotFiltering
+# ---------------------------------------------------------------------------
+
+class TestFetchThreadContextBotFiltering:
+    """Verify _fetch_thread_context excludes only our own bot, not other bots."""
+
+    def _make_adapter(self):
+        config = PlatformConfig(enabled=True, token="xoxb-fake-token")
+        a = SlackAdapter(config)
+        a._app = MagicMock()
+        a._app.client = AsyncMock()
+        a._bot_user_id = "U_BOT"
+        a._team_bot_user_ids = {"T_TEAM": "U_BOT"}
+        a._running = True
+        return a
+
+    @pytest.mark.asyncio
+    async def test_excludes_own_bot_messages(self):
+        """Messages from our own bot should be excluded from thread context."""
+        adapter = self._make_adapter()
+
+        mock_client = AsyncMock()
+        mock_client.conversations_replies = AsyncMock(return_value={
+            "messages": [
+                {"ts": "100.0", "user": "U_HUMAN", "text": "thread parent"},
+                {"ts": "100.1", "user": "U_BOT", "bot_id": "B_SELF", "text": "my own reply"},
+                {"ts": "100.2", "user": "U_HUMAN", "text": "follow-up"},
+            ]
+        })
+
+        with patch.object(adapter, "_get_client", return_value=mock_client), \
+             patch.object(adapter, "_resolve_user_name", new=AsyncMock(return_value="human")):
+            result = await adapter._fetch_thread_context(
+                channel_id="C_CHAN", thread_ts="100.0",
+                current_ts="100.2", team_id="T_TEAM",
+            )
+
+        assert "my own reply" not in result
+        assert "thread parent" in result
+
+    @pytest.mark.asyncio
+    async def test_includes_other_bot_messages(self):
+        """Messages from other bots should be included in thread context."""
+        adapter = self._make_adapter()
+
+        mock_client = AsyncMock()
+        mock_client.conversations_replies = AsyncMock(return_value={
+            "messages": [
+                {"ts": "200.0", "user": "U_HUMAN", "text": "thread start"},
+                {"ts": "200.1", "user": "U_OTHER_BOT", "bot_id": "B_OTHER",
+                 "text": "CI build passed"},
+                {"ts": "200.2", "user": "U_HUMAN", "text": "thanks"},
+            ]
+        })
+
+        with patch.object(adapter, "_get_client", return_value=mock_client), \
+             patch.object(adapter, "_resolve_user_name", new=AsyncMock(return_value="someone")):
+            result = await adapter._fetch_thread_context(
+                channel_id="C_CHAN", thread_ts="200.0",
+                current_ts="200.2", team_id="T_TEAM",
+            )
+
+        assert "CI build passed" in result
+
+    @pytest.mark.asyncio
+    async def test_excludes_own_bot_but_keeps_other_in_same_thread(self):
+        """Mixed thread: our bot and another bot — only ours is excluded."""
+        adapter = self._make_adapter()
+
+        mock_client = AsyncMock()
+        mock_client.conversations_replies = AsyncMock(return_value={
+            "messages": [
+                {"ts": "400.0", "user": "U_HUMAN", "text": "question"},
+                {"ts": "400.1", "user": "U_BOT", "bot_id": "B_SELF", "text": "hermes answer"},
+                {"ts": "400.2", "user": "U_JIRA", "bot_id": "B_JIRA",
+                 "text": "JIRA-123 linked"},
+                {"ts": "400.3", "user": "U_HUMAN", "text": "new question"},
+            ]
+        })
+
+        with patch.object(adapter, "_get_client", return_value=mock_client), \
+             patch.object(adapter, "_resolve_user_name", new=AsyncMock(return_value="user")):
+            result = await adapter._fetch_thread_context(
+                channel_id="C_CHAN", thread_ts="400.0",
+                current_ts="400.3", team_id="T_TEAM",
+            )
+
+        assert "hermes answer" not in result
+        assert "JIRA-123 linked" in result
+        assert "question" in result
