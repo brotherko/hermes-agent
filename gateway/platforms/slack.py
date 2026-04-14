@@ -1442,7 +1442,9 @@ class SlackAdapter(BasePlatformAdapter):
                 if msg_ts == current_ts:
                     continue
                 # Exclude our own bot messages to avoid circular context.
-                if msg.get("bot_id") or msg.get("subtype") == "bot_message":
+                # but keep messages from other bots as useful thread context.
+                msg_user = msg.get("user", "unknown")
+                if bot_uid and msg_user == bot_uid:
                     continue
 
                 msg_text = msg.get("text", "").strip()
@@ -1452,8 +1454,6 @@ class SlackAdapter(BasePlatformAdapter):
                 # Strip bot mentions from context messages
                 if bot_uid:
                     msg_text = msg_text.replace(f"<@{bot_uid}>", "").strip()
-
-                msg_user = msg.get("user", "unknown")
                 is_parent = msg_ts == thread_ts
                 prefix = "[thread parent] " if is_parent else ""
                 name = await self._resolve_user_name(msg_user, chat_id=channel_id)
