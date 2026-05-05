@@ -13,6 +13,7 @@ Environment variables:
     EMAIL_PASSWORD      — Email password or app-specific password
     EMAIL_POLL_INTERVAL — Seconds between mailbox checks (default: 15)
     EMAIL_ALLOWED_USERS — Comma-separated list of allowed sender addresses
+    EMAIL_VERIFY_SSL    — Set to "0" or "false" to skip TLS cert verification (default: 1)
 """
 
 import asyncio
@@ -232,6 +233,7 @@ class EmailAdapter(BasePlatformAdapter):
         self._smtp_host = os.getenv("EMAIL_SMTP_HOST", "")
         self._smtp_port = int(os.getenv("EMAIL_SMTP_PORT", "587"))
         self._poll_interval = int(os.getenv("EMAIL_POLL_INTERVAL", "15"))
+        self._verify_ssl = os.getenv("EMAIL_VERIFY_SSL", "1").lower() not in ("0", "false", "no")
 
         # Skip attachments — configured via config.yaml:
         #   platforms:
@@ -249,6 +251,14 @@ class EmailAdapter(BasePlatformAdapter):
         self._thread_context: Dict[str, Dict[str, str]] = {}
 
         logger.info("[Email] Adapter initialized for %s", self._address)
+
+    def _make_ssl_context(self) -> ssl.SSLContext:
+        """Create an SSL context, optionally disabling cert verification."""
+        ctx = ssl.create_default_context()
+        if not self._verify_ssl:
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+        return ctx
 
     def _trim_seen_uids(self) -> None:
         """Keep only the most recent UIDs to prevent unbounded memory growth.
@@ -274,7 +284,7 @@ class EmailAdapter(BasePlatformAdapter):
         """Connect to the IMAP server and start polling for new messages."""
         try:
             # Test IMAP connection
-            imap = imaplib.IMAP4_SSL(self._imap_host, self._imap_port, timeout=30)
+            imap = imaplib.IMAP4_SSL(self._imap_host, self._imap_port, timeout=30, ssl_context=self._make_ssl_context())
             imap.login(self._address, self._password)
             # Mark all existing messages as seen so we only process new ones
             imap.select("INBOX")
@@ -293,7 +303,7 @@ class EmailAdapter(BasePlatformAdapter):
         try:
             # Test SMTP connection
             smtp = smtplib.SMTP(self._smtp_host, self._smtp_port, timeout=30)
-            smtp.starttls(context=ssl.create_default_context())
+            smtp.starttls(context=self._make_ssl_context())
             smtp.login(self._address, self._password)
             smtp.quit()
             logger.info("[Email] SMTP connection test passed.")
@@ -341,7 +351,7 @@ class EmailAdapter(BasePlatformAdapter):
         """Fetch new (unseen) messages from IMAP. Runs in executor thread."""
         results = []
         try:
-            imap = imaplib.IMAP4_SSL(self._imap_host, self._imap_port, timeout=30)
+            imap = imaplib.IMAP4_SSL(self._imap_host, self._imap_port, timeout=30, ssl_context=self._make_ssl_context())
             try:
                 imap.login(self._address, self._password)
                 imap.select("INBOX")
@@ -513,7 +523,7 @@ class EmailAdapter(BasePlatformAdapter):
 
         smtp = smtplib.SMTP(self._smtp_host, self._smtp_port, timeout=30)
         try:
-            smtp.starttls(context=ssl.create_default_context())
+            smtp.starttls(context=self._make_ssl_context())
             smtp.login(self._address, self._password)
             smtp.send_message(msg)
         finally:
@@ -635,7 +645,7 @@ class EmailAdapter(BasePlatformAdapter):
 
         smtp = smtplib.SMTP(self._smtp_host, self._smtp_port, timeout=30)
         try:
-            smtp.starttls(context=ssl.create_default_context())
+            smtp.starttls(context=self._make_ssl_context())
             smtp.login(self._address, self._password)
             smtp.send_message(msg)
         finally:
@@ -714,7 +724,7 @@ class EmailAdapter(BasePlatformAdapter):
 
         smtp = smtplib.SMTP(self._smtp_host, self._smtp_port, timeout=30)
         try:
-            smtp.starttls(context=ssl.create_default_context())
+            smtp.starttls(context=self._make_ssl_context())
             smtp.login(self._address, self._password)
             smtp.send_message(msg)
         finally:
