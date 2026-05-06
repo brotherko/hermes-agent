@@ -256,6 +256,7 @@ class EmailAdapter(BasePlatformAdapter):
         """Create an SSL context, optionally disabling cert verification."""
         ctx = ssl.create_default_context()
         if not self._verify_ssl:
+            logger.warning("[Email] TLS certificate verification is DISABLED via EMAIL_VERIFY_SSL")
             ctx.check_hostname = False
             ctx.verify_mode = ssl.CERT_NONE
         return ctx
